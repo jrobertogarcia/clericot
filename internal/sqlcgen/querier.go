@@ -9,11 +9,14 @@ import (
 )
 
 type Querier interface {
+	CreateTenant(ctx context.Context, arg CreateTenantParams) (Tenants, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (Users, error)
 	DeleteUser(ctx context.Context, arg DeleteUserParams) error
+	GetTenantByID(ctx context.Context, id string) (Tenants, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (Users, error)
 	GetUserByID(ctx context.Context, arg GetUserByIDParams) (Users, error)
 	ListUsersByTenant(ctx context.Context, arg ListUsersByTenantParams) ([]Users, error)
+	UpdateTenantStatus(ctx context.Context, arg UpdateTenantStatusParams) (Tenants, error)
 }
 
 var _ Querier = (*Queries)(nil)

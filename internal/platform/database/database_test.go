@@ -3,6 +3,7 @@ package database_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -21,8 +22,12 @@ import (
 	"clericot/sql"
 )
 
-func startTestPostgres(t *testing.T) (*pgxpool.Pool, func()) {
-	t.Helper()
+var (
+	testPool      *pgxpool.Pool
+	testTxManager *database.TxManager
+)
+
+func TestMain(m *testing.M) {
 	ctx := context.Background()
 
 	pgContainer, err := postgres.Run(ctx,
@@ -35,69 +40,67 @@ func startTestPostgres(t *testing.T) (*pgxpool.Pool, func()) {
 				WithOccurrence(2).
 				WithStartupTimeout(30*time.Second)),
 	)
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	require.NoError(t, err)
+	if err != nil {
+		panic(err)
+	}
 
-	pool, err := database.NewPool(ctx, config.DatabaseConfig{
+	testPool, err = database.NewPool(ctx, config.DatabaseConfig{
 		URL:             connStr,
 		MaxConns:        10,
 		MinConns:        2,
 		MaxConnLifetime: 5 * time.Minute,
 	})
-	require.NoError(t, err)
-
-	// Configure and run embedded Goose migrations
-	database.SetMigrationsFS(sql.MigrationsFS)
-	err = database.MigrateUp(ctx, pool, "migrations")
-	require.NoError(t, err)
-
-	cleanup := func() {
-		pool.Close()
-		_ = pgContainer.Terminate(ctx)
+	if err != nil {
+		panic(err)
 	}
 
-	return pool, cleanup
+	database.SetMigrationsFS(sql.MigrationsFS)
+	if err := database.MigrateUp(ctx, testPool, "migrations"); err != nil {
+		panic(err)
+	}
+
+	testTxManager = database.NewTxManager(testPool)
+
+	code := m.Run()
+
+	testPool.Close()
+	_ = pgContainer.Terminate(ctx)
+
+	os.Exit(code)
 }
 
 func TestDatabase_PoolAndMigrations(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping testcontainers integration test in short mode")
-	}
-
-	pool, cleanup := startTestPostgres(t)
-	defer cleanup()
-
 	ctx := context.Background()
 	var exists bool
-	err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users')").Scan(&exists)
+	err := testPool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users')").Scan(&exists)
 	require.NoError(t, err)
 	assert.True(t, exists)
 }
 
 func TestTxManager_RunInTx_CommitAndRollback(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping testcontainers integration test in short mode")
-	}
-
-	pool, cleanup := startTestPostgres(t)
-	defer cleanup()
-
 	ctx := context.Background()
-	txManager := database.NewTxManager(pool)
-	rootQueries := sqlcgen.New(pool)
+	rootQueries := sqlcgen.New(testPool)
 
 	tenantID := "tenant-" + uuid.NewString()[:8]
-	_, err := pool.Exec(ctx, "INSERT INTO tenants (id, name) VALUES ($1, $2)", tenantID, "Acme Corp")
-	require.NoError(t, err)
-
 	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	_, err := rootQueries.CreateTenant(ctx, sqlcgen.CreateTenantParams{
+		ID:        tenantID,
+		Name:      "Acme Corp",
+		Status:    "active",
+		CreatedAt: ts,
+		UpdatedAt: ts,
+	})
+	require.NoError(t, err)
 
 	// 1. Test Successful Commit inside RunInTx
 	userID1 := "usr-" + uuid.NewString()[:8]
-	err = txManager.RunInTx(ctx, func(txCtx context.Context) error {
-		db := txManager.GetDB(txCtx)
+	err = testTxManager.RunInTx(ctx, func(txCtx context.Context) error {
+		db := testTxManager.GetDB(txCtx)
 		queries := sqlcgen.New(db)
 		_, err := queries.CreateUser(txCtx, sqlcgen.CreateUserParams{
 			ID:           userID1,
@@ -123,8 +126,8 @@ func TestTxManager_RunInTx_CommitAndRollback(t *testing.T) {
 
 	// 2. Test Rollback on Error
 	userID2 := "usr-" + uuid.NewString()[:8]
-	err = txManager.RunInTx(ctx, func(txCtx context.Context) error {
-		db := txManager.GetDB(txCtx)
+	err = testTxManager.RunInTx(ctx, func(txCtx context.Context) error {
+		db := testTxManager.GetDB(txCtx)
 		queries := sqlcgen.New(db)
 		_, err := queries.CreateUser(txCtx, sqlcgen.CreateUserParams{
 			ID:           userID2,
@@ -150,28 +153,26 @@ func TestTxManager_RunInTx_CommitAndRollback(t *testing.T) {
 }
 
 func TestTxManager_RunInTx_SavepointNesting(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping testcontainers integration test in short mode")
-	}
-
-	pool, cleanup := startTestPostgres(t)
-	defer cleanup()
-
 	ctx := context.Background()
-	txManager := database.NewTxManager(pool)
-	rootQueries := sqlcgen.New(pool)
+	rootQueries := sqlcgen.New(testPool)
 
 	tenantID := "tenant-" + uuid.NewString()[:8]
-	_, err := pool.Exec(ctx, "INSERT INTO tenants (id, name) VALUES ($1, $2)", tenantID, "Savepoint Corp")
+	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	_, err := rootQueries.CreateTenant(ctx, sqlcgen.CreateTenantParams{
+		ID:        tenantID,
+		Name:      "Savepoint Corp",
+		Status:    "active",
+		CreatedAt: ts,
+		UpdatedAt: ts,
+	})
 	require.NoError(t, err)
 
-	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	userIDPrimary := "usr-prim-" + uuid.NewString()[:8]
 	userIDSecondary := "usr-sec-" + uuid.NewString()[:8]
 
 	// Outer transaction
-	err = txManager.RunInTx(ctx, func(txCtx context.Context) error {
-		db := txManager.GetDB(txCtx)
+	err = testTxManager.RunInTx(ctx, func(txCtx context.Context) error {
+		db := testTxManager.GetDB(txCtx)
 		queries := sqlcgen.New(db)
 
 		// Create primary user in outer transaction
@@ -188,8 +189,8 @@ func TestTxManager_RunInTx_SavepointNesting(t *testing.T) {
 		require.NoError(t, err)
 
 		// Inner nested transaction (SAVEPOINT) that fails
-		nestedErr := txManager.RunInTx(txCtx, func(nestedCtx context.Context) error {
-			nestedDB := txManager.GetDB(nestedCtx)
+		nestedErr := testTxManager.RunInTx(txCtx, func(nestedCtx context.Context) error {
+			nestedDB := testTxManager.GetDB(nestedCtx)
 			nestedQueries := sqlcgen.New(nestedDB)
 			_, err := nestedQueries.CreateUser(nestedCtx, sqlcgen.CreateUserParams{
 				ID:           userIDSecondary,
