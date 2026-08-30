@@ -6,128 +6,68 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"clericot/internal/config"
 	"clericot/internal/modules/auth"
 	"clericot/internal/modules/orders"
 	"clericot/internal/platform/app"
 	platformAuth "clericot/internal/platform/auth"
-	"clericot/internal/platform/database"
 	"clericot/internal/platform/router"
 	"clericot/internal/platform/tenant"
-	"clericot/internal/sqlcgen"
-	"clericot/sql"
+	"clericot/tests/fixtures"
+	"clericot/tests/testsuite"
 )
 
 var (
-	testAdminPool *pgxpool.Pool
-	testAppPool   *pgxpool.Pool
-	bundle        *router.RouterBundle
+	bundle *router.RouterBundle
 )
 
 func TestMain(m *testing.M) {
-	ctx := context.Background()
+	testsuite.Main(m)
+}
 
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("postgrespassword"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	adminConnStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		panic(err)
-	}
-
-	testAdminPool, err = database.NewPool(ctx, config.DatabaseConfig{
-		URL:             adminConnStr,
-		MaxConns:        10,
-		MinConns:        2,
-		MaxConnLifetime: 5 * time.Minute,
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	database.SetMigrationsFS(sql.MigrationsFS)
-	if err := database.MigrateUp(ctx, testAdminPool, "migrations"); err != nil {
-		panic(err)
-	}
-
-	appConnStr := strings.Replace(adminConnStr, "postgres:postgrespassword", "app_user:app_user_password", 1)
-	testAppPool, err = database.NewPool(ctx, config.DatabaseConfig{
-		URL:             appConnStr,
-		MaxConns:        10,
-		MinConns:        2,
-		MaxConnLifetime: 5 * time.Minute,
-	})
-	if err != nil {
-		panic(err)
-	}
+func setupAPIRouter(t *testing.T) *router.RouterBundle {
+	t.Helper()
 
 	cfg, _ := config.Load()
-	txManager := database.NewTxManager(testAppPool)
-	tokenService := platformAuth.NewTokenService(cfg.Auth.JWTSecret, nil)
+	tokenService := platformAuth.NewTokenService("e2e-api-jwt-secret-key-32-chars-long", nil)
 
-	healthChecker := app.NewHealthChecker(testAppPool, nil)
-	bundle = router.NewRouter(cfg, healthChecker, tokenService.HTTPMiddleware, tenant.Middleware)
+	healthChecker := app.NewHealthChecker(testsuite.SharedAppPool, nil)
+	b := router.NewRouter(cfg, healthChecker, tokenService.HTTPMiddleware, tenant.Middleware)
 
 	// Explicit constructor DI for domain modules
-	auth.NewModule(bundle.API, txManager, tokenService)
-	orders.NewModule(bundle.API, txManager, nil)
+	auth.NewModule(b.API, testsuite.SharedTxManager, tokenService)
+	orders.NewModule(b.API, testsuite.SharedTxManager, nil)
 
-	code := m.Run()
-
-	testAppPool.Close()
-	testAdminPool.Close()
-	_ = pgContainer.Terminate(ctx)
-
-	os.Exit(code)
+	return b
 }
 
 func TestAPI_E2EAuthAndOrderFlow(t *testing.T) {
 	ctx := context.Background()
-	adminQueries := sqlcgen.New(testAdminPool)
-	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	bundle = setupAPIRouter(t)
 
 	// 1. Create Tenant
-	tenantID := "tenant-e2e-" + uuid.NewString()[:8]
-	_, err := adminQueries.CreateTenant(ctx, sqlcgen.CreateTenantParams{
-		ID:        tenantID,
-		Name:      "E2E API Test Corp",
-		Status:    "active",
-		CreatedAt: ts,
-		UpdatedAt: ts,
-	})
+	tenantID, err := testsuite.SeedTenant(ctx, "E2E API Test Corp")
 	require.NoError(t, err)
+
+	regDTO := fixtures.NewRegisterDTO(
+		fixtures.WithRegisterTenantID(tenantID),
+		fixtures.WithRegisterEmail("e2e-user-"+uuid.NewString()[:6]+"@corp.com"),
+		fixtures.WithRegisterName("E2E API Tester"),
+		fixtures.WithRegisterPassword("SuperSecret2026!"),
+	)
 
 	// 2. Register User via HTTP POST /v1/auth/register
 	regPayload, _ := json.Marshal(map[string]any{
-		"tenant_id": tenantID,
-		"email":     "e2e-api-user@corp.com",
-		"password":  "SuperSecret2026!",
-		"name":      "E2E API Tester",
+		"tenant_id": regDTO.TenantID,
+		"email":     regDTO.Email,
+		"password":  regDTO.Password,
+		"name":      regDTO.Name,
 	})
 	regReq := httptest.NewRequest("POST", "/v1/auth/register", bytes.NewReader(regPayload))
 	regReq.Header.Set("Content-Type", "application/json")
@@ -145,9 +85,9 @@ func TestAPI_E2EAuthAndOrderFlow(t *testing.T) {
 
 	// 3. Login User via HTTP POST /v1/auth/login
 	loginPayload, _ := json.Marshal(map[string]any{
-		"tenant_id": tenantID,
-		"email":     "e2e-api-user@corp.com",
-		"password":  "SuperSecret2026!",
+		"tenant_id": regDTO.TenantID,
+		"email":     regDTO.Email,
+		"password":  regDTO.Password,
 	})
 	loginReq := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewReader(loginPayload))
 	loginReq.Header.Set("Content-Type", "application/json")
@@ -156,12 +96,17 @@ func TestAPI_E2EAuthAndOrderFlow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, loginRec.Code)
 
 	// 4. Create Order via HTTP POST /v1/orders
+	itemDTO := fixtures.NewCreateOrderItemDTO(
+		fixtures.WithCreateOrderItemProductName("Widget Pro"),
+		fixtures.WithCreateOrderItemQuantity(2),
+		fixtures.WithCreateOrderItemUnitPriceCents(1500),
+	)
 	orderPayload, _ := json.Marshal(map[string]any{
 		"items": []map[string]any{
 			{
-				"product_name":     "Widget Pro",
-				"quantity":         2,
-				"unit_price_cents": 1500,
+				"product_name":     itemDTO.ProductName,
+				"quantity":         itemDTO.Quantity,
+				"unit_price_cents": itemDTO.UnitPriceCents,
 			},
 		},
 	})

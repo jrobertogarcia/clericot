@@ -8,13 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clericot/pkg/testharness"
+	"clericot/tests/testsuite"
 )
 
-func TestHarness_SeedTenantAndUser(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping testcontainers integration test in short mode")
-	}
+func TestMain(m *testing.M) {
+	testsuite.Main(m)
+}
 
+func TestHarness_SeedTenantAndUser(t *testing.T) {
 	harness := testharness.New(t)
 	defer harness.Close()
 

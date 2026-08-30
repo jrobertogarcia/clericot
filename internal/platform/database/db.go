@@ -36,9 +36,9 @@ func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, err
 		return nil, fmt.Errorf("failed to create pgxpool: %w", err)
 	}
 
-	// Verify connectivity with retry
+	// Verify connectivity with retry loop (10 attempts, 500ms backoff)
 	var pingErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		pingErr = pool.Ping(pingCtx)
 		cancel()
