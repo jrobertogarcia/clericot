@@ -14,6 +14,17 @@ type BrokerConfig struct {
 	Driver string // "redis", "nats", "kafka"
 }
 
+// NopPublisher is a no-op publisher used when message broker is disabled or in local test mode.
+type NopPublisher struct{}
+
+func (n *NopPublisher) Publish(topic string, messages ...*message.Message) error {
+	return nil
+}
+
+func (n *NopPublisher) Close() error {
+	return nil
+}
+
 // NewPubSub creates a Watermill Publisher and Subscriber with Redis Streams defaults.
 func NewPubSub(cfg BrokerConfig, rdb *redis.Client, logger watermill.LoggerAdapter) (message.Publisher, message.Subscriber, error) {
 	if logger == nil {

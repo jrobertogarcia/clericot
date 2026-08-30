@@ -14,6 +14,7 @@ type Config struct {
 	Redis    RedisConfig    `envPrefix:"REDIS_"`
 	Storage  StorageConfig  `envPrefix:"STORAGE_"`
 	Auth     AuthConfig     `envPrefix:"AUTH_"`
+	Events   EventsConfig   `envPrefix:"EVENTS_"`
 	OTel     OTelConfig     `envPrefix:"OTEL_"`
 }
 
@@ -39,6 +40,10 @@ type RedisConfig struct {
 
 type StorageConfig struct {
 	BucketURL string `env:"BUCKET_URL" envDefault:"file:///tmp/clericot-storage"`
+}
+
+type EventsConfig struct {
+	Driver string `env:"DRIVER" envDefault:"redis"`
 }
 
 type AuthConfig struct {

@@ -9,13 +9,18 @@ import (
 )
 
 type Querier interface {
+	CreateOrder(ctx context.Context, arg CreateOrderParams) (Orders, error)
+	CreateOrderItem(ctx context.Context, arg CreateOrderItemParams) (OrderItems, error)
 	CreateTenant(ctx context.Context, arg CreateTenantParams) (Tenants, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (Users, error)
 	DeleteUser(ctx context.Context, arg DeleteUserParams) error
+	GetOrderByID(ctx context.Context, arg GetOrderByIDParams) (Orders, error)
 	GetTenantByID(ctx context.Context, id string) (Tenants, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (Users, error)
 	GetUserByID(ctx context.Context, arg GetUserByIDParams) (Users, error)
+	ListOrderItems(ctx context.Context, arg ListOrderItemsParams) ([]OrderItems, error)
 	ListUsersByTenant(ctx context.Context, arg ListUsersByTenantParams) ([]Users, error)
+	UpdateOrderStatus(ctx context.Context, arg UpdateOrderStatusParams) (Orders, error)
 	UpdateTenantStatus(ctx context.Context, arg UpdateTenantStatusParams) (Tenants, error)
 }
 

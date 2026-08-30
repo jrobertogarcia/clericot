@@ -8,6 +8,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type OrderItems struct {
+	ID             string             `json:"id"`
+	OrderID        string             `json:"order_id"`
+	TenantID       string             `json:"tenant_id"`
+	ProductName    string             `json:"product_name"`
+	Quantity       int32              `json:"quantity"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type Orders struct {
+	ID         string             `json:"id"`
+	TenantID   string             `json:"tenant_id"`
+	UserID     string             `json:"user_id"`
+	TotalCents int64              `json:"total_cents"`
+	Status     string             `json:"status"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type RiverJob struct {
+	ID          int64              `json:"id"`
+	Args        []byte             `json:"args"`
+	Attempt     int16              `json:"attempt"`
+	AttemptedAt pgtype.Timestamptz `json:"attempted_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Errors      [][]byte           `json:"errors"`
+	FinalizedAt pgtype.Timestamptz `json:"finalized_at"`
+	Kind        string             `json:"kind"`
+	MaxAttempts int16              `json:"max_attempts"`
+	Metadata    []byte             `json:"metadata"`
+	Priority    int16              `json:"priority"`
+	Queue       string             `json:"queue"`
+	State       string             `json:"state"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	Tags        []string           `json:"tags"`
+}
+
 type Tenants struct {
 	ID        string             `json:"id"`
 	Name      string             `json:"name"`

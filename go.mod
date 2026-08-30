@@ -21,6 +21,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.30.0
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.30.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
