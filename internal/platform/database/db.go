@@ -10,7 +10,7 @@ import (
 	"clericot/internal/config"
 )
 
-// NewPool initializes a production-tuned pgxpool connection pool.
+// NewPool initializes a production-tuned pgxpool connection pool with connection retry.
 func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
@@ -36,12 +36,20 @@ func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, err
 		return nil, fmt.Errorf("failed to create pgxpool: %w", err)
 	}
 
-	// Verify connectivity
-	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	// Verify connectivity with retry
+	var pingErr error
+	for i := 0; i < 5; i++ {
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		pingErr = pool.Ping(pingCtx)
+		cancel()
+		if pingErr == nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if pingErr != nil {
 		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping database: %w", pingErr)
 	}
 
 	return pool, nil

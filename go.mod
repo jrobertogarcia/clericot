@@ -7,7 +7,11 @@ require (
 	github.com/ThreeDotsLabs/watermill-redisstream v1.4.5
 	github.com/alexedwards/scs/goredisstore v0.0.0-20251002162104-209de6e426de
 	github.com/alexedwards/scs/v2 v2.9.0
+	github.com/alexliesenfeld/health v0.8.1
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/danielgtaylor/huma/v2 v2.39.1
+	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/cors v1.2.2
 	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/google/uuid v1.6.0
 	github.com/hibiken/asynq v0.26.0
@@ -22,6 +26,9 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/tink-crypto/tink-go/v2 v2.8.0
 	github.com/wneessen/go-mail v0.8.1
+	go.opentelemetry.io/otel v1.46.0
+	go.opentelemetry.io/otel/sdk v1.46.0
+	go.opentelemetry.io/otel/sdk/metric v1.46.0
 	gocloud.dev v0.46.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
@@ -120,11 +127,8 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
-	go.opentelemetry.io/otel v1.44.0 // indirect
-	go.opentelemetry.io/otel/metric v1.44.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.44.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
-	go.opentelemetry.io/otel/trace v1.44.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
