@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"clericot/internal/config"
-	domainAuth "clericot/internal/domain/auth"
+	authModule "clericot/internal/modules/auth"
 	platformAuth "clericot/internal/platform/auth"
 	"clericot/internal/platform/database"
 	"clericot/internal/sqlcgen"
@@ -27,7 +27,7 @@ import (
 var (
 	testAdminPool *pgxpool.Pool
 	testAppPool   *pgxpool.Pool
-	testAuthSvc   *domainAuth.AuthService
+	testAuthMod   *authModule.Module
 	tokenSvc      *platformAuth.TokenService
 )
 
@@ -81,7 +81,7 @@ func TestMain(m *testing.M) {
 
 	txManager := database.NewTxManager(testAppPool)
 	tokenSvc = platformAuth.NewTokenService("super-secret-jwt-key-minimum-32-chars-long", nil)
-	testAuthSvc = domainAuth.NewAuthService(txManager, tokenSvc)
+	testAuthMod = authModule.NewModule(nil, txManager, tokenSvc)
 
 	code := m.Run()
 
@@ -101,40 +101,66 @@ func TestAuthService_RegisterLoginAndGetMe(t *testing.T) {
 	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	_, err := adminQueries.CreateTenant(ctx, sqlcgen.CreateTenantParams{
 		ID:        tenantID,
-		Name:      "Auth Tenant Org",
+		Name:      "Auth Module Test Tenant",
 		Status:    "active",
 		CreatedAt: ts,
 		UpdatedAt: ts,
 	})
 	require.NoError(t, err)
 
-	email := "developer@auth-org.com"
+	email := "user-" + uuid.NewString()[:8] + "@auth-module.com"
 	password := "SecureP@ssword2026!"
 
 	// 1. Register User
-	token, expiresAt, err := testAuthSvc.Register(ctx, tenantID, email, password, "Developer Dev")
+	authToken, user, err := testAuthMod.Service.Register(ctx, authModule.RegisterDTO{
+		TenantID: tenantID,
+		Email:    email,
+		Password: password,
+		Name:     "Decoupled User",
+	})
 	require.NoError(t, err)
-	require.NotEmpty(t, token)
-	assert.True(t, expiresAt.After(time.Now()))
+	require.NotNil(t, authToken)
+	require.NotEmpty(t, authToken.AccessToken)
+	assert.True(t, authToken.ExpiresAt.After(time.Now()))
+	assert.Equal(t, email, user.Email)
+	assert.Equal(t, authModule.RoleMember, user.Role)
 
-	// 2. Validate Token and Retrieve User
-	principal, err := tokenSvc.ValidateToken(ctx, token)
+	// 2. Duplicate Registration Rejection
+	_, _, err = testAuthMod.Service.Register(ctx, authModule.RegisterDTO{
+		TenantID: tenantID,
+		Email:    email,
+		Password: password,
+		Name:     "Duplicate",
+	})
+	assert.ErrorIs(t, err, authModule.ErrUserAlreadyExists)
+
+	// 3. Token Validation & GetMe
+	principal, err := tokenSvc.ValidateToken(ctx, authToken.AccessToken)
 	require.NoError(t, err)
 	assert.Equal(t, email, principal.Email)
 	assert.Equal(t, tenantID, principal.TenantID)
 
 	authedCtx := platformAuth.WithPrincipal(ctx, principal)
-	user, err := testAuthSvc.GetMe(authedCtx)
+	me, err := testAuthMod.Service.GetMe(authedCtx)
 	require.NoError(t, err)
-	assert.Equal(t, "Developer Dev", user.Name)
-	assert.Equal(t, email, user.Email)
+	assert.Equal(t, "Decoupled User", me.Name)
+	assert.Equal(t, email, me.Email)
 
-	// 3. Login with Credentials
-	loginToken, _, err := testAuthSvc.Login(ctx, tenantID, email, password)
+	// 4. Login with Valid Credentials
+	loginToken, loggedUser, err := testAuthMod.Service.Login(ctx, authModule.LoginDTO{
+		TenantID: tenantID,
+		Email:    email,
+		Password: password,
+	})
 	require.NoError(t, err)
-	require.NotEmpty(t, loginToken)
+	require.NotNil(t, loginToken)
+	assert.Equal(t, user.ID, loggedUser.ID)
 
-	// 4. Login with Invalid Password
-	_, _, err = testAuthSvc.Login(ctx, tenantID, email, "WrongPassword")
-	assert.Error(t, err)
+	// 5. Login with Invalid Password
+	_, _, err = testAuthMod.Service.Login(ctx, authModule.LoginDTO{
+		TenantID: tenantID,
+		Email:    email,
+		Password: "InvalidPassword999",
+	})
+	assert.ErrorIs(t, err, authModule.ErrInvalidCredentials)
 }

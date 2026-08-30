@@ -13,6 +13,8 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"clericot/internal/config"
+	"clericot/internal/modules/auth"
+	"clericot/internal/modules/orders"
 	"clericot/internal/platform/database"
 	"clericot/internal/platform/events"
 	"clericot/internal/platform/telemetry"
@@ -68,6 +70,8 @@ func main() {
 	// 4. Configure River Workers
 	workers := river.NewWorkers()
 	river.AddWorker(workers, events.NewOutboxRelayWorker(publisher))
+	river.AddWorker(workers, auth.NewUserRegisteredWorker(logger))
+	river.AddWorker(workers, orders.NewOrderCreatedWorker(logger))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(dbPool), &river.Config{
 		Workers: workers,

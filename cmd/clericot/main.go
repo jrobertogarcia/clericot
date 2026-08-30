@@ -29,7 +29,7 @@ func main() {
 
 	moduleCreateCmd := &cobra.Command{
 		Use:   "create [name]",
-		Short: "Scaffold a new enterprise domain module with models, service, handlers, and queries",
+		Short: "Scaffold a new enterprise domain module with the canonical 6-file layout (entity, repo, service, handler, worker, module)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.ToLower(args[0])
@@ -102,32 +102,56 @@ func main() {
 
 func scaffoldModule(name string) error {
 	capitalized := strings.ToUpper(name[:1]) + name[1:]
-	dir := filepath.Join("internal", "domain", name)
+	dir := filepath.Join("internal", "modules", name)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	// 1. model.go
-	modelContent := fmt.Sprintf(`package %s
+	// 1. entity.go (Pure domain entities & sentinels, zero external persistence/transport imports)
+	entityContent := fmt.Sprintf(`package %s
 
-type %sInput struct {
-	Body struct {
-		Name string `+"`"+`json:"name" doc:"Entity name"`+"`"+`
-	}
+import (
+	"errors"
+	"time"
+)
+
+type %s struct {
+	ID        string
+	TenantID  string
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-type %sResponse struct {
-	Body struct {
-		ID   string `+"`"+`json:"id"`+"`"+`
-		Name string `+"`"+`json:"name"`+"`"+`
-	}
-}
-`, name, capitalized, capitalized)
-	if err := os.WriteFile(filepath.Join(dir, "model.go"), []byte(modelContent), 0644); err != nil {
+var (
+	Err%sNotFound = errors.New("%s not found")
+)
+`, name, capitalized, capitalized, name)
+	if err := os.WriteFile(filepath.Join(dir, "entity.go"), []byte(entityContent), 0644); err != nil {
 		return err
 	}
 
-	// 2. service.go
+	// 2. repository.go (Data access layer)
+	repoContent := fmt.Sprintf(`package %s
+
+import (
+	"context"
+	"clericot/internal/platform/database"
+)
+
+type Repository struct {
+	txManager *database.TxManager
+}
+
+func NewRepository(txManager *database.TxManager) *Repository {
+	return &Repository{txManager: txManager}
+}
+`, name)
+	if err := os.WriteFile(filepath.Join(dir, "repository.go"), []byte(repoContent), 0644); err != nil {
+		return err
+	}
+
+	// 3. service.go (Domain business logic)
 	serviceContent := fmt.Sprintf(`package %s
 
 import (
@@ -135,33 +159,92 @@ import (
 	"clericot/internal/platform/database"
 )
 
-type %sService struct {
+type Service struct {
+	repo      *Repository
 	txManager *database.TxManager
 }
 
-func New%sService(txManager *database.TxManager) *%sService {
-	return &%sService{txManager: txManager}
+func NewService(repo *Repository, txManager *database.TxManager) *Service {
+	return &Service{
+		repo:      repo,
+		txManager: txManager,
+	}
 }
-`, name, capitalized, capitalized, capitalized, capitalized)
+`, name)
 	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte(serviceContent), 0644); err != nil {
 		return err
 	}
 
-	// 3. handler.go
+	// 4. handler.go (Huma v2 typed HTTP endpoints)
 	handlerContent := fmt.Sprintf(`package %s
 
 import (
+	"context"
 	"github.com/danielgtaylor/huma/v2"
 )
 
-func RegisterRoutes(api huma.API, svc *%sService) {
-	// Register typed Huma OpenAPI routes
+type Handler struct {
+	svc *Service
 }
-`, name, capitalized)
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+func (h *Handler) RegisterRoutes(api huma.API) {
+	// Register typed Huma OpenAPI operations
+}
+`, name)
 	if err := os.WriteFile(filepath.Join(dir, "handler.go"), []byte(handlerContent), 0644); err != nil {
 		return err
 	}
 
-	fmt.Printf("Successfully scaffolded domain module: internal/domain/%s\n", name)
+	// 5. worker.go (River / Asynq background event handlers)
+	workerContent := fmt.Sprintf(`package %s
+
+import (
+	"context"
+	"log/slog"
+)
+`, name)
+	if err := os.WriteFile(filepath.Join(dir, "worker.go"), []byte(workerContent), 0644); err != nil {
+		return err
+	}
+
+	// 6. module.go (Explicit constructor DI wiring)
+	moduleContent := fmt.Sprintf(`package %s
+
+import (
+	"github.com/danielgtaylor/huma/v2"
+	"clericot/internal/platform/database"
+)
+
+type Module struct {
+	Handler *Handler
+	Service *Service
+	Repo    *Repository
+}
+
+func NewModule(api huma.API, txManager *database.TxManager) *Module {
+	repo := NewRepository(txManager)
+	service := NewService(repo, txManager)
+	handler := NewHandler(service)
+
+	if api != nil {
+		handler.RegisterRoutes(api)
+	}
+
+	return &Module{
+		Handler: handler,
+		Service: service,
+		Repo:    repo,
+	}
+}
+`, name)
+	if err := os.WriteFile(filepath.Join(dir, "module.go"), []byte(moduleContent), 0644); err != nil {
+		return err
+	}
+
+	fmt.Printf("Successfully scaffolded domain module: internal/modules/%s (6-file anatomy)\n", name)
 	return nil
 }

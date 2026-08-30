@@ -1,4 +1,4 @@
-package order
+package orders
 
 import (
 	"context"
@@ -8,96 +8,107 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/riverqueue/river"
 
 	"clericot/internal/platform/audit"
 	platformAuth "clericot/internal/platform/auth"
 	"clericot/internal/platform/database"
 	"clericot/internal/platform/events"
-	"clericot/internal/platform/httperr"
 	"clericot/internal/platform/tenant"
-	"clericot/internal/sqlcgen"
 )
 
-type OrderService struct {
+// Service coordinates business logic, transaction orchestration, outbox staging,
+// and compliance audit logging for orders.
+type Service struct {
+	repo        *Repository
 	txManager   *database.TxManager
 	riverClient *river.Client[pgx.Tx]
 }
 
-func NewOrderService(txManager *database.TxManager, riverClient *river.Client[pgx.Tx]) *OrderService {
-	return &OrderService{
+// NewService constructs a new orders Service.
+func NewService(repo *Repository, txManager *database.TxManager, riverClient *river.Client[pgx.Tx]) *Service {
+	return &Service{
+		repo:        repo,
 		txManager:   txManager,
 		riverClient: riverClient,
 	}
 }
 
-func (s *OrderService) CreateOrder(ctx context.Context, items []OrderItemInput) (*sqlcgen.Orders, []sqlcgen.OrderItems, error) {
+// CreateOrder validates line items, calculates totals, inserts records in a transaction,
+// and stages an atomic outbox event alongside an immutable audit trail.
+func (s *Service) CreateOrder(ctx context.Context, items []CreateOrderItemDTO) (*Order, error) {
 	principal := platformAuth.PrincipalFromContext(ctx)
 	if principal == nil {
-		return nil, nil, httperr.NewUnauthorized("unauthenticated request")
+		return nil, ErrUnauthenticated
 	}
 
-	orderID := uuid.NewString()
-	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	if len(items) == 0 {
+		return nil, ErrInvalidOrderItems
+	}
 
 	var totalCents int64
 	for _, it := range items {
+		if it.Quantity <= 0 || it.UnitPriceCents < 0 {
+			return nil, ErrInvalidOrderItems
+		}
 		totalCents += int64(it.Quantity) * it.UnitPriceCents
 	}
 
-	var createdOrder sqlcgen.Orders
-	var createdItems []sqlcgen.OrderItems
+	orderID := uuid.NewString()
+	now := time.Now().UTC()
 
+	var createdOrder *Order
 	err := s.txManager.RunInTx(tenant.WithTenant(ctx, principal.TenantID), func(txCtx context.Context) error {
-		db := s.txManager.GetDB(txCtx)
-		queries := sqlcgen.New(db)
-
 		// 1. Insert Order Header
-		ord, err := queries.CreateOrder(txCtx, sqlcgen.CreateOrderParams{
+		ord, err := s.repo.CreateOrder(txCtx, &Order{
 			ID:         orderID,
 			TenantID:   principal.TenantID,
 			UserID:     principal.ID,
 			TotalCents: totalCents,
-			Status:     "pending",
-			CreatedAt:  ts,
-			UpdatedAt:  ts,
+			Status:     OrderStatusPending,
+			CreatedAt:  now,
+			UpdatedAt:  now,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to insert order: %w", err)
+			return fmt.Errorf("failed to persist order: %w", err)
 		}
-		createdOrder = ord
 
 		// 2. Insert Order Items
+		var lineItems []*OrderItem
 		for _, item := range items {
 			lineID := uuid.NewString()
-			ordItem, err := queries.CreateOrderItem(txCtx, sqlcgen.CreateOrderItemParams{
+			createdItem, err := s.repo.CreateOrderItem(txCtx, &OrderItem{
 				ID:             lineID,
 				OrderID:        orderID,
 				TenantID:       principal.TenantID,
 				ProductName:    item.ProductName,
-				Quantity:       int32(item.Quantity),
+				Quantity:       item.Quantity,
 				UnitPriceCents: item.UnitPriceCents,
-				CreatedAt:      ts,
+				CreatedAt:      now,
 			})
 			if err != nil {
-				return fmt.Errorf("failed to insert order line item: %w", err)
+				return fmt.Errorf("failed to persist order item: %w", err)
 			}
-			createdItems = append(createdItems, ordItem)
+			lineItems = append(lineItems, createdItem)
 		}
+		ord.Items = lineItems
+		createdOrder = ord
 
 		// 3. Stage CloudEvent in River Outbox atomically
-		eventPayload, _ := json.Marshal(map[string]any{
+		eventPayload, err := json.Marshal(map[string]any{
 			"order_id":    orderID,
 			"user_id":     principal.ID,
 			"total_cents": totalCents,
-			"status":      "pending",
+			"status":      string(OrderStatusPending),
 		})
+		if err != nil {
+			return fmt.Errorf("failed to serialize domain event: %w", err)
+		}
 
 		domainEvt := events.DomainEvent{
 			ID:        uuid.NewString(),
 			Type:      "orders.order_created.v1",
-			Source:    "order.service",
+			Source:    "orders.service",
 			TenantID:  principal.TenantID,
 			Data:      eventPayload,
 			Timestamp: time.Now().Unix(),
@@ -112,7 +123,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, items []OrderItemInput) 
 			}
 		}
 
-		// 4. Stage Compliance Audit Log atomically
+		// 4. Stage Compliance Audit Log atomically (SOC 2 / HIPAA)
 		auditPayload := audit.AuditPayload{
 			ActorID:   principal.ID,
 			TenantID:  principal.TenantID,
@@ -129,88 +140,59 @@ func (s *OrderService) CreateOrder(ctx context.Context, items []OrderItemInput) 
 
 		return nil
 	})
-
 	if err != nil {
-		return nil, nil, httperr.Transform(err)
+		return nil, err
 	}
 
-	return &createdOrder, createdItems, nil
+	return createdOrder, nil
 }
 
-func (s *OrderService) GetOrderByID(ctx context.Context, id string) (*sqlcgen.Orders, []sqlcgen.OrderItems, error) {
+// GetOrderByID retrieves an order with line items by its ID.
+func (s *Service) GetOrderByID(ctx context.Context, id string) (*Order, error) {
 	principal := platformAuth.PrincipalFromContext(ctx)
 	if principal == nil {
-		return nil, nil, httperr.NewUnauthorized("unauthenticated request")
+		return nil, ErrUnauthenticated
 	}
 
-	var order sqlcgen.Orders
-	var items []sqlcgen.OrderItems
-
+	var order *Order
 	err := s.txManager.RunInTx(tenant.WithTenant(ctx, principal.TenantID), func(txCtx context.Context) error {
-		db := s.txManager.GetDB(txCtx)
-		queries := sqlcgen.New(db)
-
-		ord, err := queries.GetOrderByID(txCtx, sqlcgen.GetOrderByIDParams{
-			ID:       id,
-			TenantID: principal.TenantID,
-		})
+		ord, err := s.repo.GetByID(txCtx, principal.TenantID, id)
 		if err != nil {
-			return httperr.NewNotFound("order not found")
+			return err
 		}
 		order = ord
-
-		its, err := queries.ListOrderItems(txCtx, sqlcgen.ListOrderItemsParams{
-			OrderID:  id,
-			TenantID: principal.TenantID,
-		})
-		if err != nil {
-			return err
-		}
-		items = its
 		return nil
 	})
-
 	if err != nil {
-		return nil, nil, httperr.Transform(err)
+		return nil, err
 	}
 
-	return &order, items, nil
+	return order, nil
 }
 
-func (s *OrderService) CancelOrder(ctx context.Context, id string) (*sqlcgen.Orders, error) {
+// CancelOrder transitions an order to cancelled status and stages an audit log.
+func (s *Service) CancelOrder(ctx context.Context, id string) (*Order, error) {
 	principal := platformAuth.PrincipalFromContext(ctx)
 	if principal == nil {
-		return nil, httperr.NewUnauthorized("unauthenticated request")
+		return nil, ErrUnauthenticated
 	}
 
-	ts := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
-	var updatedOrder sqlcgen.Orders
-
+	var updatedOrder *Order
 	err := s.txManager.RunInTx(tenant.WithTenant(ctx, principal.TenantID), func(txCtx context.Context) error {
-		db := s.txManager.GetDB(txCtx)
-		queries := sqlcgen.New(db)
-
-		ord, err := queries.GetOrderByID(txCtx, sqlcgen.GetOrderByIDParams{
-			ID:       id,
-			TenantID: principal.TenantID,
-		})
-		if err != nil {
-			return httperr.NewNotFound("order not found")
-		}
-
-		if ord.Status == "cancelled" {
-			return httperr.NewConflict("order is already cancelled")
-		}
-
-		upd, err := queries.UpdateOrderStatus(txCtx, sqlcgen.UpdateOrderStatusParams{
-			ID:        id,
-			TenantID:  principal.TenantID,
-			Status:    "cancelled",
-			UpdatedAt: ts,
-		})
+		ord, err := s.repo.GetByID(txCtx, principal.TenantID, id)
 		if err != nil {
 			return err
 		}
+
+		if ord.Status == OrderStatusCancelled {
+			return ErrOrderAlreadyCancelled
+		}
+
+		upd, err := s.repo.UpdateStatus(txCtx, principal.TenantID, id, OrderStatusCancelled)
+		if err != nil {
+			return err
+		}
+		upd.Items = ord.Items
 		updatedOrder = upd
 
 		// Stage audit log
@@ -226,10 +208,32 @@ func (s *OrderService) CancelOrder(ctx context.Context, id string) (*sqlcgen.Ord
 
 		return nil
 	})
-
 	if err != nil {
-		return nil, httperr.Transform(err)
+		return nil, err
 	}
 
-	return &updatedOrder, nil
+	return updatedOrder, nil
+}
+
+// SearchOrders executes dynamic multi-predicate queries using Bob SQL builder.
+func (s *Service) SearchOrders(ctx context.Context, filter SearchFilter) ([]*Order, error) {
+	principal := platformAuth.PrincipalFromContext(ctx)
+	if principal == nil {
+		return nil, ErrUnauthenticated
+	}
+
+	var orders []*Order
+	err := s.txManager.RunInTx(tenant.WithTenant(ctx, principal.TenantID), func(txCtx context.Context) error {
+		res, err := s.repo.Search(txCtx, principal.TenantID, filter)
+		if err != nil {
+			return err
+		}
+		orders = res
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return orders, nil
 }

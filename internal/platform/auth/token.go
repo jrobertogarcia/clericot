@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -117,4 +119,19 @@ func (s *TokenService) IsTokenRevoked(ctx context.Context, jti string) (bool, er
 		return false, err
 	}
 	return exists > 0, nil
+}
+
+// HTTPMiddleware creates an HTTP middleware that extracts Bearer JWT tokens and attaches the AuthPrincipal to context.
+func (s *TokenService) HTTPMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+			if principal, err := s.ValidateToken(r.Context(), tokenString); err == nil && principal != nil {
+				ctx := WithPrincipal(r.Context(), principal)
+				r = r.WithContext(ctx)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
