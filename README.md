@@ -1,123 +1,113 @@
-# Clericot: Production-Grade Go Enterprise Framework
+# Clericot
 
-[![CI Pipeline](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml/badge.svg)](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jrobertogarcia/clericot)](https://goreportcard.com/report/github.com/jrobertogarcia/clericot)
+[![CI](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml/badge.svg)](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/badge/go-1.25%2B-blue.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Clericot** is an enterprise-grade Go web framework and architecture template engineered with modern 2026 patterns: PostgreSQL Row-Level Security (RLS) multi-tenancy, River transactional outbox, Watermill Redis Streams event bus, Otter v2 L1/L2 caching, Google Tink KMS envelope encryption, Huma v2 OpenAPI 3.1 type-safe REST transport, and a deterministic 5-phase graceful shutdown lifecycle.
+Clericot is an enterprise Go web framework featuring PostgreSQL Row-Level Security (RLS) multi-tenancy, River transactional outbox, Watermill Redis Streams, Otter v2 / Redis two-tier caching, and Huma v2 OpenAPI 3.1 REST transport.
 
----
+## Prerequisites
 
-## 🏛️ Architecture Overview
-
-```mermaid
-graph TD
-    Client[HTTP Client / Frontend] -->|REST / OpenAPI 3.1| Chi[Chi v5 Router]
-    Chi -->|Type Validation & Routing| Huma[Huma v2 Engine]
-    
-    subgraph "Application Core (Domain Layer)"
-        Huma --> AuthModule[Auth & User Module]
-        Huma --> OrderModule[Orders Reference Module]
-    end
-
-    subgraph "Platform Foundation Tier"
-        AuthModule --> TxManager[TxManager (Savepoints & Hooks)]
-        OrderModule --> TxManager
-        TxManager -->|Injects app.current_tenant_id| Postgres[(PostgreSQL 16 + RLS)]
-        OrderModule -->|Atomically Enqueues| RiverOutbox[(River Outbox `river_job`)]
-        AuthModule --> TokenService[JWX JOSE / JWT]
-        TokenService -->|Revocation Check| Redis[(Redis 7 Cluster)]
-        
-        CacheEngine[Otter v2 L1 + Redis L2 Cache] --> Redis
-        StorageEngine[GoCloud Blob Storage] --> MinIO[(S3 / GCS / MinIO)]
-    end
-
-    subgraph "Asynchronous Background Tier"
-        RiverWorker[River Outbox Worker Daemon] -->|Dequeues Jobs| RiverOutbox
-        RiverWorker -->|Publishes CloudEvents| Watermill[Watermill Redis Streams Broker]
-        Watermill -->|At-Most-Once Idempotent Handlers| EventHandlers[Domain Consumers / Webhooks]
-        AsynqWorker[Asynq Distributed Worker] -->|Background Tasks| Mailer[Email / SMS / Push]
-    end
-```
-
----
-
-## 🚀 Key Features & Capabilities
-
-- **PostgreSQL Native RLS Multi-Tenancy**: Kernel-level tenant data isolation enforced via `FORCE ROW LEVEL SECURITY` and transaction-scoped `set_config('app.current_tenant_id', ...)` hooks.
-- **Transactional Outbox Engine**: Zero dual-write hazard. Domain events and compliance audit trails are committed atomically to PostgreSQL via River and relayed asynchronously.
-- **Universal Event Broker**: Powered by Watermill with Redis Streams, stream auto-trimming (100k cap), PEL consumer group crash recovery, and poison queue dead-lettering.
-- **L1/L2 High-Throughput Caching**: In-memory `otter/v2` (W-TinyLFU eviction) coupled with Redis L2, `singleflight` stampede suppression, and cross-node Pub/Sub invalidations.
-- **Type-Safe REST Transport**: Chi v5 with Huma v2 generating live OpenAPI 3.1 specifications (`/openapi.json`) and interactive documentation (`/docs`).
-- **5-Phase Deterministic Shutdown Coordinator**: Strictly budget-managed 25-second teardown cycle (Readiness Draining $\rightarrow$ Ingress/SSE Shutdown $\rightarrow$ Worker Drain $\rightarrow$ Telemetry Flush $\rightarrow$ Resource Closure).
-- **Multi-Cloud Envelope Encryption**: Google Tink AEAD key management for sensitive PII and field-level encryption.
-- **Developer Tooling & CLI**: Built-in scaffolding tool `clericot` for domain modules and Goose migrations.
-
----
-
-## 🛠️ Getting Started
-
-### Prerequisites
 - Go `1.25+`
-- Docker & Docker Compose
-- `sqlc` & `golangci-lint`
+- Docker and Docker Compose
+- `golangci-lint` (for static analysis)
+
+## Quickstart
 
 ### 1. Start Infrastructure
+
+Start local dependencies (PostgreSQL 16, Redis 7, MinIO, Mailpit):
+
 ```bash
 docker compose up -d
 ```
 
 ### 2. Run Database Migrations
+
+Apply pending Goose database migrations:
+
 ```bash
 go run cmd/clericot/main.go migrate up
 ```
 
-### 3. Start API Server Daemon
+### 3. Start API Server
+
 ```bash
 go run cmd/api/main.go
 ```
-The server will start on `http://localhost:8080`.
-- Interactive API Docs: `http://localhost:8080/docs`
-- OpenAPI Specification: `http://localhost:8080/openapi.json`
-- Liveness Probe: `http://localhost:8080/livez`
-- Readiness Probe: `http://localhost:8080/readyz`
 
-### 4. Start Background Worker Daemon
+The API server listens on `http://localhost:8080`.
+
+### 4. Start Background Worker
+
+Run River outbox workers and Asynq task processors:
+
 ```bash
 go run cmd/worker/main.go
 ```
 
----
+## Local Endpoints
 
-## 🧪 Testing
+| Endpoint | Path | Description |
+| :--- | :--- | :--- |
+| Interactive API Docs | [http://localhost:8080/docs](http://localhost:8080/docs) | Huma v2 OpenAPI documentation interface |
+| OpenAPI 3.1 Spec | [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json) | Raw OpenAPI 3.1 JSON schema |
+| Liveness Probe | [http://localhost:8080/livez](http://localhost:8080/livez) | Non-blocking shallow liveness check |
+| Readiness Probe | [http://localhost:8080/readyz](http://localhost:8080/readyz) | Dependency health check (PostgreSQL, Redis) |
 
-Run all unit and Testcontainers integration tests:
+## Testing & Quality
+
+Run tests with the race detector enabled:
+
 ```bash
-go test -v ./...
+go test -v -race ./...
 ```
 
-Run linter:
+Run static analysis:
+
 ```bash
 golangci-lint run ./...
 ```
 
----
+## Developer CLI
 
-## 📦 Developer CLI Scaffolding
+Clericot includes a built-in CLI for domain scaffolding and schema migrations:
 
-Scaffold a new enterprise domain module (creates models, service, handlers, and sqlc queries):
 ```bash
+# Scaffold a new domain module with canonical 6-file layout
 go run cmd/clericot/main.go module create billing
-```
 
-Create a new timestamped migration:
-```bash
+# Create a new timestamped migration file
 go run cmd/clericot/main.go migrate create add_invoices_table
+
+# Apply all pending migrations
+go run cmd/clericot/main.go migrate up
 ```
 
----
+## Core Environment Variables
 
-## 📜 License
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `APP_PORT` | `8080` | HTTP API server listener port |
+| `APP_ENV` | `development` | Application runtime environment (`development`, `production`, `test`) |
+| `APP_LOG_LEVEL` | `info` | Logging verbosity (`debug`, `info`, `warn`, `error`) |
+| `DB_DATABASE_URL` | `postgres://postgres:postgrespassword@localhost:5432/clericot?sslmode=disable` | Primary PostgreSQL connection string |
+| `DB_ADMIN_DATABASE_URL` | `postgres://postgres:postgrespassword@localhost:5432/clericot?sslmode=disable` | Privileged migration connection string |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis instance connection string |
+| `STORAGE_BUCKET_URL` | `file:///tmp/clericot-storage` | Object storage bucket URL (`s3://...`, `file://...`) |
+| `AUTH_JWT_SECRET` | `dev-super-secret-jwt-signing-key-32b` | Secret key for JWT signing and verification |
+| `AUTH_SESSION_SECRET` | `dev-super-secret-session-key-32b` | Secret key for session cookie encryption |
+| `EVENTS_DRIVER` | `redis` | Event bus driver backend (`redis`, `nop`) |
+
+## Documentation
+
+For architecture standards and engineering guidelines:
+
+- [Project Layout & Architecture](docs/architecture/project-layout.md): Directory structure, module boundaries, and dependency injection conventions.
+- [Master Stack Standards](docs/architecture/stack-standards.md): Technology matrix, library choices, and architectural rationale.
+- [The 15 Golden Rules](docs/guidelines/golden-rules.md): Architectural rules for multi-tenancy, transactional outbox, and resilience.
+- [Distilled Lessons & Edge Cases](docs/guidelines/distilled-lessons.md): Practical operational guidance and edge-case handling.
+
+## License
 
 This project is licensed under the [MIT License](LICENSE).
-
