@@ -12,10 +12,13 @@ import (
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/fileblob"
 	_ "gocloud.dev/blob/memblob"
-	_ "gocloud.dev/blob/s3blob"
-
-	"clericot/internal/platform/tenant"
 )
+
+// TenantExtractor extracts the active tenant identifier from context.
+// Configured by the tenant package init hook to avoid package import cycles.
+var TenantExtractor = func(ctx context.Context) string {
+	return ""
+}
 
 // StorageEngine provides cloud-agnostic blob storage abstraction.
 type StorageEngine struct {
@@ -38,7 +41,7 @@ func NewStorageEngineWithBucket(bucket *blob.Bucket) *StorageEngine {
 
 // PresignedUpload generates a tenant-scoped presigned PUT URL.
 func (s *StorageEngine) PresignedUpload(ctx context.Context, filename string, contentType string, expiry time.Duration) (signedURL string, key string, err error) {
-	tenantID := tenant.FromContext(ctx)
+	tenantID := TenantExtractor(ctx)
 	if tenantID == "" {
 		tenantID = "global"
 	}

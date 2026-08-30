@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"clericot/internal/platform/database"
+	"clericot/internal/platform/storage"
 )
 
 type tenantKey struct{}
@@ -14,6 +15,8 @@ type tenantKey struct{}
 func init() {
 	// Register the tenant session setter hook with the database package
 	database.TenantSetter = SetTenantSession
+	// Register the tenant context extractor hook with the storage package
+	storage.TenantExtractor = FromContext
 }
 
 // WithTenant stores the active tenant identifier in context.
