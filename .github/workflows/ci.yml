@@ -20,10 +20,10 @@ jobs:
           go-version: '1.25.10'
           cache: true
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      - name: Install and Run golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          golangci-lint run ./...
 
   test:
     name: Test Suite (Unit & Integration)
