@@ -120,3 +120,4 @@ go run cmd/clericot/main.go migrate create add_invoices_table
 ## 📜 License
 
 This project is licensed under the [MIT License](LICENSE).
+
