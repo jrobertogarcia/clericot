@@ -74,7 +74,7 @@ go run cmd/clericot/main.go migrate up
 
 ### 3. Start API Server Daemon
 ```bash
-go run cmd/server/main.go
+go run cmd/api/main.go
 ```
 The server will start on `http://localhost:8080`.
 - Interactive API Docs: `http://localhost:8080/docs`

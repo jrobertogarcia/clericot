@@ -1,6 +1,8 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
@@ -18,7 +20,7 @@ type RouterBundle struct {
 }
 
 // NewRouter constructs a production-ready Chi router and registers Huma v2 OpenAPI 3.1 engine.
-func NewRouter(cfg *config.Config, healthChecker *app.HealthChecker) *RouterBundle {
+func NewRouter(cfg *config.Config, healthChecker *app.HealthChecker, middlewares ...func(http.Handler) http.Handler) *RouterBundle {
 	r := chi.NewRouter()
 
 	// 1. Standard Security & Observability Middlewares
@@ -35,13 +37,20 @@ func NewRouter(cfg *config.Config, healthChecker *app.HealthChecker) *RouterBund
 		MaxAge:           300,
 	}))
 
-	// 3. Mount Asynchronous Health & Readiness Probes
+	// 3. Custom Middlewares
+	for _, m := range middlewares {
+		if m != nil {
+			r.Use(m)
+		}
+	}
+
+	// 4. Mount Asynchronous Health & Readiness Probes
 	if healthChecker != nil {
 		r.Mount("/livez", healthChecker.LiveHandler())
 		r.Mount("/readyz", healthChecker.ReadyHandler())
 	}
 
-	// 4. Mount Huma v2 OpenAPI 3.1 Type-Safe API Engine
+	// 5. Mount Huma v2 OpenAPI 3.1 Type-Safe API Engine
 	humaConfig := huma.DefaultConfig(cfg.App.Name, "1.0.0")
 	humaConfig.OpenAPIPath = "/openapi"
 	humaConfig.DocsPath = "/docs"

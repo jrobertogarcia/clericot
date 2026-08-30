@@ -13,8 +13,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"clericot/internal/config"
-	domainAuth "clericot/internal/domain/auth"
-	domainOrder "clericot/internal/domain/order"
+	"clericot/internal/modules/auth"
+	"clericot/internal/modules/orders"
 	"clericot/internal/platform/app"
 	platformAuth "clericot/internal/platform/auth"
 	"clericot/internal/platform/cache"
@@ -22,13 +22,14 @@ import (
 	"clericot/internal/platform/router"
 	"clericot/internal/platform/storage"
 	"clericot/internal/platform/telemetry"
+	"clericot/internal/platform/tenant"
 	"clericot/sql"
 )
 
 func main() {
 	// 1. Initialize Structured Logging
 	logger := telemetry.InitLogger(os.Getenv("APP_LOG_LEVEL"))
-	logger.Info("bootstrapping clericot server daemon")
+	logger.Info("bootstrapping clericot api daemon")
 
 	// 2. Load Strong-Typed Environment Config
 	cfg, err := config.Load()
@@ -90,14 +91,11 @@ func main() {
 	streamHub := app.NewStreamHub()
 
 	// 8. Construct Chi Router & Mount Huma v2 OpenAPI Engine
-	bundle := router.NewRouter(cfg, healthChecker)
+	bundle := router.NewRouter(cfg, healthChecker, tokenService.HTTPMiddleware, tenant.Middleware)
 
-	// 9. Register Domain Modules
-	authSvc := domainAuth.NewAuthService(txManager, tokenService)
-	domainAuth.RegisterRoutes(bundle.API, authSvc)
-
-	orderSvc := domainOrder.NewOrderService(txManager, nil)
-	domainOrder.RegisterRoutes(bundle.API, orderSvc)
+	// 9. Instantiate Domain Modules via Explicit Constructor DI
+	auth.NewModule(bundle.API, txManager, tokenService)
+	orders.NewModule(bundle.API, txManager, nil)
 
 	// 10. HTTP Server
 	serverAddr := fmt.Sprintf(":%d", cfg.App.Port)
@@ -129,7 +127,7 @@ func main() {
 
 	// 12. Launch HTTP Listener
 	go func() {
-		logger.Info("http server listening", "addr", serverAddr, "port", cfg.App.Port)
+		logger.Info("http api server listening", "addr", serverAddr, "port", cfg.App.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server failed to listen", "error", err)
 			os.Exit(1)
