@@ -22,6 +22,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.30.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.30.0
+	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
@@ -81,6 +82,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/wire v0.7.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.19.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -118,6 +120,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

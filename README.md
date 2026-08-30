@@ -1,71 +1,122 @@
-# Clericot — Enterprise Go Virtual Framework & Architecture (2026)
+# Clericot: Production-Grade Go Enterprise Framework
 
-[![Go Version](https://img.shields.io/badge/go-1.25%2B-blue.svg)](https://golang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI Pipeline](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml/badge.svg)](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jrobertogarcia/clericot)](https://goreportcard.com/report/github.com/jrobertogarcia/clericot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Clericot** is an enterprise-grade Virtual Framework for Go. Like its namesake—a refined cocktail combining distinct, high-quality fruits and wines into a harmonious blend—Clericot composes standard-compliant, zero-magic libraries on top of Go's standard `net/http` and PostgreSQL to achieve high developer velocity, full interoperability, and compile-time safety without monolithic framework lock-in.
-
----
-
-## 1. Architectural Highlights
-
-* **API-First & Headless Scope:** High-performance, contract-first backend engine powered by `Chi v5` and `Huma v2` (OpenAPI 3.1 & RFC 9457 Problem Details via `platform/httperr`), with non-blocking asynchronous health probes (`alexliesenfeld/health`).
-* **Savepoint-Backed Transaction Management (`RunInTx`):** Atomic multi-repository workflows through a context-bound transaction coordinator with native `pgx/v5` savepoint nested transactions and detached rollback context (`context.WithoutCancel`) without leaking database primitives into domain service signatures.
-* **Engine-Level Multi-Tenancy with PostgreSQL RLS:** Strict data isolation at the database engine level using PostgreSQL Row-Level Security (RLS) with `FORCE ROW LEVEL SECURITY` activated via transaction-scoped parameterized configuration (`SELECT set_config('app.current_tenant_id', $1, true)`) and active state filtering (`status = 'active'`).
-* **Two-Tier Persistence:** Default to `sqlc` + `pgx/v5` for static OLTP queries, complemented by `stephenafamo/bob` for complex dynamic multi-predicate queries, mapped to pure domain entities in `repository.go`.
-* **Strict 3-Tier Asynchronous Architecture:** Transactional outbox staging via `river` (with aggressive autovacuum tuning and `audit.event.v1` CloudEvents), high-throughput stateless job queues via `asynq`, and universal event routing via `watermill` (with Redis Streams default, PEL auto-reclamation, `SET NX` idempotency, and `middleware.PoisonQueue` DLQ routing).
-* **Multi-Cloud Envelope Encryption:** Secure confidential secrets and sensitive PII at rest using `google/tink/v2/go` (`KmsEnvelopeAead`) backed by AWS KMS, GCP Cloud KMS, or HashiCorp Vault.
-* **Two-Tier Hybrid Cache:** Sub-microsecond in-memory L1 cache (`otter/v2` W-TinyLFU adaptive eviction with 2-minute fallback TTL) paired with distributed L2 (`redis`), `singleflight` thundering herd protection, versioned payload validation, and Redis Pub/Sub cross-pod invalidation.
-* **Synchronized 5-Phase Graceful Shutdown:** Coordinate a zero-downtime 25-second shutdown budget guaranteed to complete cleanly within standard container orchestrator grace periods.
-* **Zero-State Integration Testing & Test Factories:** Real ephemeral containers using singleton `TestMain` Testcontainers, auto-rolling-back transactional test wrappers (`RunTestInTx`), and deterministic generics test factories (`brianvoe/gofakeit/v7`).
+**Clericot** is an enterprise-grade Go web framework and architecture template engineered with modern 2026 patterns: PostgreSQL Row-Level Security (RLS) multi-tenancy, River transactional outbox, Watermill Redis Streams event bus, Otter v2 L1/L2 caching, Google Tink KMS envelope encryption, Huma v2 OpenAPI 3.1 type-safe REST transport, and a deterministic 5-phase graceful shutdown lifecycle.
 
 ---
 
-## 2. Directory Structure
+## 🏛️ Architecture Overview
 
-```text
-├── cmd/
-│   ├── api/             # HTTP API entrypoint (main.go)
-│   ├── worker/          # Background worker entrypoint (main.go - River, Asynq, Watermill relay)
-│   └── clericot/        # Clericot developer CLI tool (Cobra + Bubble Tea v2)
-├── internal/
-│   ├── config/          # caarlos0/env configuration
-│   ├── modules/         # Modular feature packages (auth, orders)
-│   └── platform/        # Reusable Core Platform Engines
-│       ├── app/         # 5-phase shutdown coordinator, StreamHub & health probes
-│       ├── auth/        # Hybrid AuthPrincipal (JWT + Redis cookie session)
-│       ├── audit/       # River Outbox audit.event.v1 CloudEvents schema & dispatcher
-│       ├── httperr/     # RFC 9457 Problem Details error transformer
-│       ├── database/    # pgxpool, RunInTx transaction manager, Goose embedded runner
-│       ├── tenant/      # PostgreSQL RLS session interceptors (set_config)
-│       ├── events/      # Watermill event bus, PoisonQueue DLQ & Outbox relay worker
-│       ├── storage/     # gocloud.dev/blob cloud storage engine
-│       ├── notify/      # wneessen/go-mail & multi-channel dispatcher
-│       ├── cache/       # Two-tier cache (otter/v2 + Redis + Singleflight)
-│       ├── security/    # Argon2id, Google Tink envelope KMS, AES-256-GCM, redis_rate
-│       └── telemetry/   # OpenTelemetry tracing, metrics & slog bridge
-├── sql/
-│   ├── migrations/      # Goose SQL migrations
-│   └── queries/         # sqlc query definitions
-├── tests/
-│   ├── testsuite/       # Singleton TestMain harness (Postgres/Redis/MinIO testcontainers)
-│   └── fixtures/        # Deterministic generics factories (gofakeit/v7)
-├── docker-compose.yml
-├── sqlc.yaml
-├── Makefile
-└── go.mod
+```mermaid
+graph TD
+    Client[HTTP Client / Frontend] -->|REST / OpenAPI 3.1| Chi[Chi v5 Router]
+    Chi -->|Type Validation & Routing| Huma[Huma v2 Engine]
+    
+    subgraph "Application Core (Domain Layer)"
+        Huma --> AuthModule[Auth & User Module]
+        Huma --> OrderModule[Orders Reference Module]
+    end
+
+    subgraph "Platform Foundation Tier"
+        AuthModule --> TxManager[TxManager (Savepoints & Hooks)]
+        OrderModule --> TxManager
+        TxManager -->|Injects app.current_tenant_id| Postgres[(PostgreSQL 16 + RLS)]
+        OrderModule -->|Atomically Enqueues| RiverOutbox[(River Outbox `river_job`)]
+        AuthModule --> TokenService[JWX JOSE / JWT]
+        TokenService -->|Revocation Check| Redis[(Redis 7 Cluster)]
+        
+        CacheEngine[Otter v2 L1 + Redis L2 Cache] --> Redis
+        StorageEngine[GoCloud Blob Storage] --> MinIO[(S3 / GCS / MinIO)]
+    end
+
+    subgraph "Asynchronous Background Tier"
+        RiverWorker[River Outbox Worker Daemon] -->|Dequeues Jobs| RiverOutbox
+        RiverWorker -->|Publishes CloudEvents| Watermill[Watermill Redis Streams Broker]
+        Watermill -->|At-Most-Once Idempotent Handlers| EventHandlers[Domain Consumers / Webhooks]
+        AsynqWorker[Asynq Distributed Worker] -->|Background Tasks| Mailer[Email / SMS / Push]
+    end
 ```
 
 ---
 
-## 3. Documentation
+## 🚀 Key Features & Capabilities
 
-* [Stack Standards](docs/architecture/stack-standards.md) — Master dependency matrix and technical rationale.
-* [Project Layout](docs/architecture/project-layout.md) — Module anatomy and dependency wiring rules.
-* [Golden Rules](docs/guidelines/golden-rules.md) — The 15 canonical engineering principles.
+- **PostgreSQL Native RLS Multi-Tenancy**: Kernel-level tenant data isolation enforced via `FORCE ROW LEVEL SECURITY` and transaction-scoped `set_config('app.current_tenant_id', ...)` hooks.
+- **Transactional Outbox Engine**: Zero dual-write hazard. Domain events and compliance audit trails are committed atomically to PostgreSQL via River and relayed asynchronously.
+- **Universal Event Broker**: Powered by Watermill with Redis Streams, stream auto-trimming (100k cap), PEL consumer group crash recovery, and poison queue dead-lettering.
+- **L1/L2 High-Throughput Caching**: In-memory `otter/v2` (W-TinyLFU eviction) coupled with Redis L2, `singleflight` stampede suppression, and cross-node Pub/Sub invalidations.
+- **Type-Safe REST Transport**: Chi v5 with Huma v2 generating live OpenAPI 3.1 specifications (`/openapi.json`) and interactive documentation (`/docs`).
+- **5-Phase Deterministic Shutdown Coordinator**: Strictly budget-managed 25-second teardown cycle (Readiness Draining $\rightarrow$ Ingress/SSE Shutdown $\rightarrow$ Worker Drain $\rightarrow$ Telemetry Flush $\rightarrow$ Resource Closure).
+- **Multi-Cloud Envelope Encryption**: Google Tink AEAD key management for sensitive PII and field-level encryption.
+- **Developer Tooling & CLI**: Built-in scaffolding tool `clericot` for domain modules and Goose migrations.
 
 ---
 
-## 4. License
+## 🛠️ Getting Started
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+### Prerequisites
+- Go `1.25+`
+- Docker & Docker Compose
+- `sqlc` & `golangci-lint`
+
+### 1. Start Infrastructure
+```bash
+docker compose up -d
+```
+
+### 2. Run Database Migrations
+```bash
+go run cmd/clericot/main.go migrate up
+```
+
+### 3. Start API Server Daemon
+```bash
+go run cmd/server/main.go
+```
+The server will start on `http://localhost:8080`.
+- Interactive API Docs: `http://localhost:8080/docs`
+- OpenAPI Specification: `http://localhost:8080/openapi.json`
+- Liveness Probe: `http://localhost:8080/livez`
+- Readiness Probe: `http://localhost:8080/readyz`
+
+### 4. Start Background Worker Daemon
+```bash
+go run cmd/worker/main.go
+```
+
+---
+
+## 🧪 Testing
+
+Run all unit and Testcontainers integration tests:
+```bash
+go test -v ./...
+```
+
+Run linter:
+```bash
+golangci-lint run ./...
+```
+
+---
+
+## 📦 Developer CLI Scaffolding
+
+Scaffold a new enterprise domain module (creates models, service, handlers, and sqlc queries):
+```bash
+go run cmd/clericot/main.go module create billing
+```
+
+Create a new timestamped migration:
+```bash
+go run cmd/clericot/main.go migrate create add_invoices_table
+```
+
+---
+
+## 📜 License
+
+This project is licensed under the [MIT License](LICENSE).
