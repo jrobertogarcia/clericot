@@ -1,0 +1,33 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Environment & local credentials
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary & cache files
+tmp/
+*.tmp
+*.log
+.air.toml
