@@ -19,4 +19,6 @@ Key operational and architectural lessons distilled from the Clericot implementa
 * **Testcontainer Connection Flakiness:** Container log readiness does not guarantee immediate socket bind. Connection initializers (`NewPool`) should include lightweight connection retry loops (5 attempts, 500ms).
 
 ### 5. Git & PR Lifecycle Protocol
-* **Strict PR Auditing:** Never replace GitHub PR creation with local non-fast-forward branch merges. Always execute the full lifecycle: `git push` $\rightarrow$ `gh pr create` $\rightarrow$ `/review-branch` $\rightarrow$ `/review-pr` $\rightarrow$ `gh pr merge`.
+* **Strict PR Auditing & Full Lifecycle:** Never replace GitHub PR creation with local manual branch merges. Always execute the full lifecycle: `git push` $\rightarrow$ `gh pr create` $\rightarrow$ `/review-branch` $\rightarrow$ `/review-pr` $\rightarrow$ `gh pr merge`.
+* **Linear Git History Enforcement:** Avoid local 3-way merge commits (`git merge --no-ff`) that produce dual-parent merge nodes and non-linear commit graphs. Enforce a single linear commit history using **Squash and Merge** (`gh pr merge --squash`) or **Rebase and Fast-Forward** (`gh pr merge --rebase` / `git merge --ff-only`).
+
