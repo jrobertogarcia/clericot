@@ -1,5 +1,7 @@
 # Clericot
 
+> Batteries-included Go framework for rapid, type-safe, and contract-first API development.
+
 [![CI](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml/badge.svg)](https://github.com/jrobertogarcia/clericot/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/go-1.25%2B-blue.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
